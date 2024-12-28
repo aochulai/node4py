@@ -16,6 +16,8 @@ else:
 def _get_proc(node_path=None, cwd=None, cmd=None):
     if node_path is None:
         node_path = "node"
+    elif not os.path.exists(node_path):
+        raise FileNotFoundError(node_path)
     if cmd is None:
         cmd = []
     p = subprocess.Popen(
@@ -69,6 +71,8 @@ class JsRunner:
         try:
             while self._is_running:
                 line = self._proc.stdout.readline()
+                if self._proc is None:
+                    break
                 if line == '' and self._proc.poll() is not None:
                     break
                 line = line.strip()
@@ -133,55 +137,87 @@ class JsRunner:
         return self.__call("acall", func, *args)
 
 
+class JsRunnerPool:
+    def __init__(self, size=1, node_path=None, cwd=None, cmd=None):
+        self._lock = threading.Lock()
+        self._runners = []
+        for i in range(size):
+            self._runners.append(JsRunner(node_path, cwd, cmd))
+
+    def close(self):
+        for r in self._runners:
+            r.close()
+        self._runners = None
+
+    def _get_runner(self):
+        with self._lock:
+            r = self._runners.pop(0)
+            self._runners.append(r)
+            return r
+
+    def execute(self, code):
+        for r in self._runners:
+            r.execute(code)
+
+    def call(self, func, *args):
+        r = self._get_runner()
+        return r.call(func, *args)
+
+    def acall(self, func, *args):
+        r = self._get_runner()
+        return r.acall(func, *args)
+
+
 node = r"D:\Code\bigo\xlib\Lib\site-packages\playwright\driver\node.exe"
 
 if __name__ == "__main__":
     print()
-    if os.path.exists(_locfile):
-        with open(_locfile, "r") as f:
-            print(f.read().encode("utf-8").hex())
-
-    with JsRunner(node) as r:
-        r.execute('''
-            function show(t_bool,t_int,t_str,t_dict,t_list){
-                let rs = [
-                    "sync call",
-                    `t_bool=${t_bool}`,
-                    `t_int=${t_int}`,
-                    `t_str=${t_str}`,
-                    `t_dict=${JSON.stringify(t_dict)}`,
-                    `t_list=${JSON.stringify(t_list)}`,
-                ]
-                return rs.join("\\n");
-            }
-            
-            async function a_show(t_bool,t_int,t_str,t_dict,t_list){
-                let rs = [
-                    "async call",
-                    `t_bool=${t_bool}`,
-                    `t_int=${t_int}`,
-                    `t_str=${t_str}`,
-                    `t_dict=${JSON.stringify(t_dict)}`,
-                    `t_list=${JSON.stringify(t_list)}`,
-                ]
-                return rs.join("\\n");
-            }
-        ''')
-        while True:
-            tx = input("Press key")
-            if tx == "0":
-                break
-            if tx == "1":
-                print(r.call("show",
-                             True,
-                             111,
-                             "string",
-                             {"dictkey": "dictvalue"},
-                             [111, "str", {"dk": "dv"}, [1, 2, 3]]))
-            if tx == "2":
-                print(r.acall("a_show",
-                              False,
-                              222,
-                              "string",
-                              {"dictkey": "dictvalue"},
-                              [222, "str", {"dk": "dv"}, [4, 5, 6]]))
+    # if os.path.exists(_locfile):
+    #     with open(_locfile, "r") as f:
+    #         print(f.read().encode("utf-8").hex())
+    p = JsRunnerPool(3, node)
+    p.execute('''
+        function show(t_bool,t_int,t_str,t_dict,t_list){
+            let rs = [
+                "sync call",
+                `t_bool=${t_bool}`,
+                `t_int=${t_int}`,
+                `t_str=${t_str}`,
+                `t_dict=${JSON.stringify(t_dict)}`,
+                `t_list=${JSON.stringify(t_list)}`,
+            ]
+            return rs.join("\\n");
+        }
+        
+        async function a_show(t_bool,t_int,t_str,t_dict,t_list){
+            let rs = [
+                "async call",
+                `t_bool=${t_bool}`,
+                `t_int=${t_int}`,
+                `t_str=${t_str}`,
+                `t_dict=${JSON.stringify(t_dict)}`,
+                `t_list=${JSON.stringify(t_list)}`,
+            ]
+            return rs.join("\\n");
+        }
+    ''')
+    while True:
+        tx = input("Press key")
+        if tx == "0":
+            break
+        if tx == "3":
+            p.close()
+        if tx == "1":
+            print(p.call("show",
+                         True,
+                         111,
+                         "string",
+                         {"dictkey": "dictvalue"},
+                         [111, "str", {"dk": "dv"}, [1, 2, 3]]))
+        if tx == "2":
+            print(p.acall("a_show",
+                          False,
+                          222,
+                          "string",
+                          {"dictkey": "dictvalue"},
+                          [222, "str", {"dk": "dv"}, [4, 5, 6]]))
